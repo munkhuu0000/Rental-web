@@ -1,0 +1,37 @@
+{
+  "name": "turees-front",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "scripts": {
+    "dev": "node scripts/run-next.mjs dev",
+    "build": "node scripts/run-next.mjs build --webpack",
+    "start": "node scripts/run-next.mjs start",
+    "preview:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "clean:next": "node scripts/clean-next-cache.mjs",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.4.2",
+    "next": "16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "wrangler": "^4.95.0"
+  }
+}

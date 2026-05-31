@@ -1,0 +1,18 @@
+{
+  "name": "turees-backend",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "nodejs_compat_populate_process_env",
+  ],
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rental-web",
+      "database_id": "369ef29a-f8f6-414c-b67d-b0d3bcb0c743",
+      "migrations_dir": "src/db/migrations",
+    },
+  ],
+}
