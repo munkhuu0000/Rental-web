@@ -1,415 +1,663 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import Link from "next/link";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { SectionHeader } from "@/app/components/menu/section-header";
+import { graphqlRequest } from "@/lib/graphql-client";
+import {
+  accountingParty,
+  accountingPartyKey,
+  CompanyOption,
+  directionLabel,
+  emptyRentalFilters,
+  formatMoney,
+  loadRentalCompanies,
+  lineTotal,
+  loadRentalRecords,
+  matchesRentalFilters,
+  remaining,
+  RentalDirection,
+  RentalFilters,
+  RentalRecord,
+  saveRentalCompanies,
+  saveRentalRecords,
+} from "@/lib/rental-records";
+import { defaultRentalMaterials, mergeRentalMaterials } from "./[customerKey]/default-rental-materials";
+import {
+  loadHiddenMaterialIds,
+  MaterialOption as SharedMaterialOption,
+  saveHiddenMaterialIds,
+} from "./[customerKey]/rental-detail-utils";
+import { MaterialFilterPicker } from "./material-filter-picker";
 
-type RentalDirection = "LEASE_OUT" | "LEASE_IN";
-
-type RentalRecord = {
+type MaterialOption = {
   id: string;
-  direction: RentalDirection;
-  date: string;
-  party: string;
-  material: string;
+  name: string;
+  unit: string;
+  defaultPrice: number;
+};
+
+type BackendContract = {
+  id: string;
+  renterCompany?: CompanyOption | null;
+  ownerCompany?: CompanyOption | null;
+};
+
+type BackendUsage = {
+  id: string;
+  contractId?: string | null;
+  materialId: string;
+  material?: MaterialOption | null;
+  movementType: "OUT" | "RETURN";
+  movementDate: string;
   quantity: number;
-  returned: number;
   unitPrice: number;
-  durationDays: number;
-  note: string;
+  usageDays: number;
+  lineTotal: number;
+  notes?: string | null;
 };
 
-type RentalFilters = {
-  dateFrom: string;
-  dateTo: string;
-  direction: string;
-  party: string;
-  material: string;
+type RentalPageData = {
+  companies: CompanyOption[];
+  materials: MaterialOption[];
+  masterContracts: BackendContract[];
+  rentalUsages: BackendUsage[];
 };
 
-const initialRentals: RentalRecord[] = [
-  {
-    id: "rental-1",
-    direction: "LEASE_OUT",
-    date: "2026-05-22",
-    party: "Эрдэнэт Барилга ХХК",
-    material: "Хэв хашмал",
-    quantity: 240,
-    returned: 120,
-    unitPrice: 1200,
-    durationDays: 14,
-    note: "А блок",
-  },
-  {
-    id: "rental-2",
-    direction: "LEASE_OUT",
-    date: "2026-05-20",
-    party: "Алтан Гэр ХХК",
-    material: "Тулаас",
-    quantity: 500,
-    returned: 40,
-    unitPrice: 900,
-    durationDays: 20,
-    note: "Суурийн ажил",
-  },
-  {
-    id: "rental-3",
-    direction: "LEASE_IN",
-    date: "2026-05-19",
-    party: "Хан Констракшн",
-    material: "Шат",
-    quantity: 18,
-    returned: 6,
-    unitPrice: 1500,
-    durationDays: 10,
-    note: "Дотоод хэрэгцээ",
-  },
-];
-
-const emptyFilters: RentalFilters = {
-  dateFrom: "",
-  dateTo: "",
-  direction: "",
-  party: "",
-  material: "",
+type PartySummary = {
+  key: string;
+  name: string;
+  companyId?: string;
+  leaseOutRemaining: number;
+  leaseInRemaining: number;
+  receivable: number;
+  payable: number;
+  activeCount: number;
 };
 
-function directionLabel(direction: RentalDirection) {
-  return direction === "LEASE_OUT" ? "Түрээслүүлэх" : "Түрээслэх";
+const RENTAL_PAGE_QUERY = `
+  query RentalPageData {
+    companies {
+      id
+      name
+      registerNumber
+      phone
+      email
+    }
+    materials {
+      id
+      name
+      unit
+      defaultPrice
+    }
+    masterContracts {
+      id
+      renterCompany {
+        id
+        name
+        registerNumber
+        phone
+        email
+      }
+      ownerCompany {
+        id
+        name
+        registerNumber
+        phone
+        email
+      }
+    }
+    rentalUsages {
+      id
+      contractId
+      materialId
+      material {
+        id
+        name
+        unit
+        defaultPrice
+      }
+      movementType
+      movementDate
+      quantity
+      unitPrice
+      usageDays
+      lineTotal
+      notes
+    }
+  }
+`;
+
+function detailHref(key: string, direction: RentalDirection) {
+  return `/rentals/${encodeURIComponent(key)}?direction=${direction}`;
 }
 
-function formatMoney(value: number) {
-  return `${value.toLocaleString()} ₮`;
+function parseNotes(notes?: string | null) {
+  if (!notes) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(notes);
+    return typeof parsed === "object" && parsed
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return { note: notes };
+  }
 }
 
-function uniqueOptions(values: string[]) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "mn-MN"),
+function backendRecord(
+  usage: BackendUsage,
+  contractById: Map<string, BackendContract>,
+): RentalRecord {
+  const notes = parseNotes(usage.notes);
+  const contract = usage.contractId
+    ? contractById.get(usage.contractId)
+    : undefined;
+  const companyId = notes.companyId || contract?.renterCompany?.id;
+  const companyName =
+    notes.companyName ||
+    contract?.renterCompany?.name ||
+    notes.usedBy ||
+    "Бүртгэлгүй харилцагч";
+
+  return {
+    id: `backend-${usage.id}`,
+    direction: usage.movementType === "OUT" ? "LEASE_OUT" : "LEASE_IN",
+    date: usage.movementDate,
+    party: notes.party || notes.usedBy || companyName,
+    companyId,
+    companyName,
+    material: usage.material?.name || usage.materialId,
+    movementType: usage.movementType,
+    quantity: usage.quantity,
+    returned: 0,
+    unitPrice: usage.unitPrice,
+    durationDays: usage.usageDays || 1,
+    note: notes.note || notes.usedAt || "",
+  };
+}
+
+function backendRecords(data: RentalPageData) {
+  const contractById = new Map(
+    data.masterContracts.map((contract) => [contract.id, contract]),
   );
-}
 
-function remaining(record: RentalRecord) {
-  return Math.max(record.quantity - record.returned, 0);
-}
-
-function lineTotal(record: RentalRecord) {
-  return record.quantity * record.unitPrice * Math.max(record.durationDays, 1);
-}
-
-function matchesFilters(record: RentalRecord, filters: RentalFilters) {
-  if (filters.dateFrom && record.date < filters.dateFrom) {
-    return false;
-  }
-
-  if (filters.dateTo && record.date > filters.dateTo) {
-    return false;
-  }
-
-  if (filters.direction && record.direction !== filters.direction) {
-    return false;
-  }
-
-  if (filters.party && record.party !== filters.party) {
-    return false;
-  }
-
-  if (filters.material && record.material !== filters.material) {
-    return false;
-  }
-
-  return true;
+  return data.rentalUsages.map((usage) => backendRecord(usage, contractById));
 }
 
 export default function RentalsPage() {
-  const [records, setRecords] = useState<RentalRecord[]>(initialRentals);
+  const [localRecords] = useState<RentalRecord[]>(() => loadRentalRecords());
+  const [localCompanies, setLocalCompanies] = useState<CompanyOption[]>(() =>
+    loadRentalCompanies(),
+  );
+  const [backendData, setBackendData] = useState<RentalPageData>({
+    companies: [],
+    materials: [],
+    masterContracts: [],
+    rentalUsages: [],
+  });
   const [direction, setDirection] = useState<RentalDirection>("LEASE_OUT");
-  const [filters, setFilters] = useState<RentalFilters>(emptyFilters);
+  const [filters, setFilters] = useState<RentalFilters>(emptyRentalFilters);
+  const [hiddenMaterialIds, setHiddenMaterialIds] = useState<string[]>(() =>
+    loadHiddenMaterialIds(),
+  );
+  const [error, setError] = useState("");
 
-  const partyOptions = useMemo(
-    () => uniqueOptions(records.map((record) => record.party)),
-    [records],
+  useEffect(() => {
+    saveRentalRecords(localRecords);
+  }, [localRecords]);
+
+  useEffect(() => {
+    saveRentalCompanies(localCompanies);
+  }, [localCompanies]);
+
+  useEffect(() => {
+    saveHiddenMaterialIds(hiddenMaterialIds);
+  }, [hiddenMaterialIds]);
+
+  useEffect(() => {
+    graphqlRequest<RentalPageData>(RENTAL_PAGE_QUERY)
+      .then((data) => setBackendData(data))
+      .catch((reason: Error) => setError(reason.message));
+  }, []);
+
+  const records = useMemo(
+    () => [...backendRecords(backendData), ...localRecords],
+    [backendData, localRecords],
   );
-  const materialOptions = useMemo(
-    () => uniqueOptions(records.map((record) => record.material)),
-    [records],
+  const companies = useMemo(() => {
+    const byId = new Map<string, CompanyOption>();
+
+    for (const company of backendData.companies) {
+      byId.set(company.id, company);
+    }
+
+    for (const company of localCompanies) {
+      byId.set(company.id, company);
+    }
+
+    return [...byId.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, "mn-MN"),
+    );
+  }, [backendData.companies, localCompanies]);
+  const selectedDirectionRecords = useMemo(
+    () => records.filter((record) => record.direction === direction),
+    [direction, records],
   );
+  const effectiveFilters = useMemo(
+    () => ({ ...filters, direction }),
+    [direction, filters],
+  );
+
+  const materialOptions = useMemo(() => {
+    const recordMaterials: SharedMaterialOption[] = selectedDirectionRecords.map(
+      (record) => ({
+        id: `record-material-${record.material}`,
+        name: record.material,
+        unit: "PCS",
+        defaultPrice: record.unitPrice,
+      }),
+    );
+
+    return mergeRentalMaterials([
+      ...defaultRentalMaterials,
+      ...backendData.materials,
+      ...recordMaterials,
+    ]).filter((material) => !hiddenMaterialIds.includes(material.id));
+  }, [backendData.materials, hiddenMaterialIds, selectedDirectionRecords]);
+
+  const partyOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    for (const company of companies) {
+      options.set(company.id, company.name);
+    }
+
+    for (const record of selectedDirectionRecords) {
+      options.set(accountingPartyKey(record), accountingParty(record));
+    }
+
+    return [...options.entries()]
+      .map(([key, name]) => ({ key, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "mn-MN"));
+  }, [companies, selectedDirectionRecords]);
+
   const filteredRecords = useMemo(
     () =>
-      records
-        .filter((record) => matchesFilters(record, filters))
-        .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)),
-    [filters, records],
+      selectedDirectionRecords
+        .filter((record) => matchesRentalFilters(record, effectiveFilters))
+        .sort(
+          (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id),
+        ),
+    [effectiveFilters, selectedDirectionRecords],
   );
 
-  const leaseOutRemaining = records
-    .filter((record) => record.direction === "LEASE_OUT")
-    .reduce((total, record) => total + remaining(record), 0);
-  const leaseInRemaining = records
-    .filter((record) => record.direction === "LEASE_IN")
-    .reduce((total, record) => total + remaining(record), 0);
-  const totalReceivable = records
-    .filter((record) => record.direction === "LEASE_OUT")
-    .reduce((total, record) => total + lineTotal(record), 0);
-  const totalPayable = records
-    .filter((record) => record.direction === "LEASE_IN")
-    .reduce((total, record) => total + lineTotal(record), 0);
+  const partySummaries = useMemo(() => {
+    const summaries = new Map<string, PartySummary>();
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    for (const company of companies) {
+      summaries.set(company.id, {
+        key: company.id,
+        name: company.name,
+        companyId: company.id,
+        leaseOutRemaining: 0,
+        leaseInRemaining: 0,
+        receivable: 0,
+        payable: 0,
+        activeCount: 0,
+      });
+    }
+
+    for (const record of filteredRecords) {
+      const key = accountingPartyKey(record);
+      const summary =
+        summaries.get(key) ??
+        ({
+          key,
+          name: accountingParty(record),
+          companyId: record.companyId,
+          leaseOutRemaining: 0,
+          leaseInRemaining: 0,
+          receivable: 0,
+          payable: 0,
+          activeCount: 0,
+        } satisfies PartySummary);
+
+      if (record.direction === "LEASE_OUT") {
+        summary.leaseOutRemaining += remaining(record);
+        summary.receivable += lineTotal(record);
+      } else {
+        summary.leaseInRemaining += remaining(record);
+        summary.payable += lineTotal(record);
+      }
+
+      if (remaining(record) > 0) {
+        summary.activeCount += 1;
+      }
+
+      summaries.set(key, summary);
+    }
+
+    return [...summaries.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, "mn-MN"),
+    );
+  }, [companies, filteredRecords]);
+
+  const visibleQuantity = selectedDirectionRecords.reduce(
+    (total, record) => total + remaining(record),
+    0,
+  );
+  const visibleAmount = selectedDirectionRecords.reduce(
+    (total, record) => total + lineTotal(record),
+    0,
+  );
+  const visibleCompanyCount = new Set(
+    selectedDirectionRecords.map((record) => accountingPartyKey(record)),
+  ).size;
+  const visibleActiveCount = partySummaries.filter((summary) =>
+    direction === "LEASE_OUT"
+      ? summary.leaseOutRemaining > 0 || summary.receivable > 0
+      : summary.leaseInRemaining > 0 || summary.payable > 0,
+  ).length;
+
+  function handleCustomerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const form = new FormData(event.currentTarget);
-    const quantity = Number(form.get("quantity") || 0);
-    const returned = Number(form.get("returned") || 0);
-    const unitPrice = Number(form.get("unitPrice") || 0);
-    const durationDays = Number(form.get("durationDays") || 1);
-    const party = String(form.get("party") || "").trim();
-    const material = String(form.get("material") || "").trim();
-    const date = String(form.get("date") || "").trim();
+    const name = String(form.get("customerName") || "").trim();
+    const registerNumber = String(form.get("registerNumber") || "").trim();
 
-    if (!party || !material || !date || quantity <= 0) {
+    if (!name) {
       return;
     }
 
-    setRecords((current) => [
-      {
-        id: `rental-${Date.now()}`,
-        direction,
-        date,
-        party,
-        material,
-        quantity,
-        returned: Math.max(0, Math.min(returned, quantity)),
-        unitPrice: Math.max(0, unitPrice),
-        durationDays: Math.max(1, durationDays),
-        note: String(form.get("note") || "").trim(),
-      },
-      ...current,
-    ]);
+    const duplicateRegistered = companies.some(
+      (company) => company.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+
+    if (duplicateRegistered) {
+      event.currentTarget.reset();
+      return;
+    }
+
+    setLocalCompanies((current) => {
+      const duplicate = current.some(
+        (company) => company.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+
+      if (duplicate) {
+        return current;
+      }
+
+      return [
+        ...current,
+        {
+          id: `local-company-${Date.now()}`,
+          name,
+          registerNumber,
+        },
+      ];
+    });
 
     event.currentTarget.reset();
   }
 
+  function hideFilterMaterial(materialId: string, materialName: string) {
+    setHiddenMaterialIds((current) =>
+      current.includes(materialId) ? current : [...current, materialId],
+    );
+
+    if (filters.material === materialName) {
+      setFilters((current) => ({ ...current, material: "" }));
+    }
+  }
+
   return (
     <>
-      <SectionHeader
-        title="Түрээс"
-        description="Түрээслүүлэх болон түрээслэх бүртгэлийг нэг дор оруулж, үлдэгдэл болон дүнг хянана."
-      />
-
-      <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className="app-card p-4">
-          <p className="text-xs font-semibold uppercase text-[var(--muted)]">Түрээслүүлсэн үлдэгдэл</p>
-          <p className="mt-2 text-2xl font-semibold">{leaseOutRemaining.toLocaleString()}</p>
-        </div>
-        <div className="app-card p-4">
-          <p className="text-xs font-semibold uppercase text-[var(--muted)]">Түрээсэлсэн үлдэгдэл</p>
-          <p className="mt-2 text-2xl font-semibold">{leaseInRemaining.toLocaleString()}</p>
-        </div>
-        <div className="app-card p-4">
-          <p className="text-xs font-semibold uppercase text-[var(--muted)]">Авлагын дүн</p>
-          <p className="mt-2 text-2xl font-semibold">{formatMoney(totalReceivable)}</p>
-        </div>
-        <div className="app-card p-4">
-          <p className="text-xs font-semibold uppercase text-[var(--muted)]">Өглөгийн дүн</p>
-          <p className="mt-2 text-2xl font-semibold">{formatMoney(totalPayable)}</p>
+      <SectionHeader title="Түрээс" />
+      <section className="app-card mb-4 p-4">
+        <div className="grid max-w-md grid-cols-2 rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-1">
+          {(["LEASE_OUT", "LEASE_IN"] as RentalDirection[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => {
+                setDirection(item);
+                setFilters(emptyRentalFilters);
+              }}
+              className={`rounded px-3 py-2 text-sm font-semibold ${
+                direction === item
+                  ? "bg-[var(--accent)] text-white shadow-sm"
+                  : "text-[var(--muted)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              {directionLabel(item)}
+            </button>
+          ))}
         </div>
       </section>
 
-      <form onSubmit={handleSubmit} className="app-card mb-4 border-l-4 border-[var(--accent)] p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold">Шинэ түрээс бүртгэх</p>
-            <p className="text-xs text-[var(--muted)]">Түрээслүүлэх эсвэл түрээслэх хөдөлгөөн нэмнэ.</p>
-          </div>
-          <div className="grid grid-cols-2 rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-1">
-            {(["LEASE_OUT", "LEASE_IN"] as RentalDirection[]).map((item) => (
+      <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="app-card p-4">
+          <p className="text-xs font-semibold uppercase text-[var(--muted)]">
+            {direction === "LEASE_OUT"
+              ? "Түрээслүүлсэн материал"
+              : "Түрээсэлсэн материал"}
+          </p>
+          <p className="mt-2 text-2xl font-semibold">
+            {visibleQuantity.toLocaleString()} ш
+          </p>
+        </div>
+        <div className="app-card p-4">
+          <p className="text-xs font-semibold uppercase text-[var(--muted)]">
+            Харилцагч компани
+          </p>
+          <p className="mt-2 text-2xl font-semibold">
+            {visibleCompanyCount.toLocaleString()}
+          </p>
+        </div>
+        <div className="app-card p-4">
+          <p className="text-xs font-semibold uppercase text-[var(--muted)]">
+            Идэвхтэй бүртгэл
+          </p>
+          <p className="mt-2 text-2xl font-semibold">
+            {visibleActiveCount.toLocaleString()}
+          </p>
+        </div>
+        <div className="app-card p-4">
+          <p className="text-xs font-semibold uppercase text-[var(--muted)]">
+            {direction === "LEASE_OUT" ? "Авлага" : "Өглөг"}
+          </p>
+          <p className="mt-2 text-2xl font-semibold">
+            {formatMoney(visibleAmount)}
+          </p>
+        </div>
+      </section>
+
+      <section className="app-card mb-4 border-l-4 border-[var(--accent)] p-4">
+        <div className="mb-3">
+          <p className="text-sm font-semibold">Шинэ бүртгэл</p>
+        </div>
+
+        <form
+          onSubmit={handleCustomerSubmit}
+          className="mb-4 rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-3"
+        >
+          <p className="mb-3 text-sm font-semibold"></p>
+          <div className="grid gap-3 md:grid-cols-[1.6fr_1fr_auto]">
+            <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
+              Харилцагч компанийн нэр
+              <input
+                name="customerName"
+                required
+                placeholder="Компанийн нэр..."
+                className="input-shell h-10 w-full px-3 text-[var(--foreground)]"
+              />
+            </label>
+            <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
+              Регистр
+              <input
+                name="registerNumber"
+                placeholder="Заавал биш"
+                className="input-shell h-10 w-full px-3 text-[var(--foreground)]"
+              />
+            </label>
+            <div className="flex items-end">
               <button
-                key={item}
-                type="button"
-                onClick={() => setDirection(item)}
-                className={`rounded px-3 py-1.5 text-sm font-semibold ${
-                  direction === item
-                    ? "bg-[var(--accent)] text-white shadow-sm"
-                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
-                }`}
+                type="submit"
+                className="action-button h-10 w-full justify-center px-4"
               >
-                {directionLabel(item)}
+                Бүртгэх
               </button>
-            ))}
+            </div>
           </div>
-        </div>
+        </form>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)] xl:col-span-1">
-            Огноо
-            <input name="date" type="date" required className="input-shell h-10 w-full px-3 text-[var(--foreground)]" />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)] xl:col-span-2">
-            Харилцагч
-            <input
-              name="party"
-              list="rental-party-options"
-              required
-              placeholder={direction === "LEASE_OUT" ? "Түрээслэгч..." : "Нийлүүлэгч..."}
-              className="input-shell h-10 w-full px-3 text-[var(--foreground)]"
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)] xl:col-span-2">
-            Материал
-            <input
-              name="material"
-              list="rental-material-options"
-              required
-              placeholder="Материал..."
-              className="input-shell h-10 w-full px-3 text-[var(--foreground)]"
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
-            Тоо
-            <input name="quantity" type="number" min="1" required className="input-shell h-10 w-full px-3 text-right text-[var(--foreground)]" />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
-            Буцаасан
-            <input name="returned" type="number" min="0" defaultValue="0" className="input-shell h-10 w-full px-3 text-right text-[var(--foreground)]" />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
-            Өдөр
-            <input name="durationDays" type="number" min="1" defaultValue="1" className="input-shell h-10 w-full px-3 text-right text-[var(--foreground)]" />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)]">
-            Нэгж үнэ
-            <input name="unitPrice" type="number" min="0" defaultValue="0" className="input-shell h-10 w-full px-3 text-right text-[var(--foreground)]" />
-          </label>
-          <label className="space-y-1 text-sm font-medium text-[var(--muted)] xl:col-span-3">
-            Тэмдэглэл
-            <input name="note" placeholder="Объект, нөхцөл..." className="input-shell h-10 w-full px-3 text-[var(--foreground)]" />
-          </label>
-          <div className="flex items-end xl:col-span-1">
-            <button type="submit" className="action-button h-10 w-full justify-center px-4">
-              Бүртгэх
-            </button>
-          </div>
-        </div>
-        <datalist id="rental-party-options">
-          {partyOptions.map((party) => (
-            <option key={party} value={party} />
-          ))}
-        </datalist>
-        <datalist id="rental-material-options">
-          {materialOptions.map((material) => (
-            <option key={material} value={material} />
-          ))}
-        </datalist>
-      </form>
+        {error ? (
+          <p className="mt-3 text-sm text-[var(--danger)]">
+            Backend мэдээлэл уншихад алдаа гарлаа: {error}
+          </p>
+        ) : null}
+      </section>
 
-      <div className="app-card mb-4 p-4">
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <section className="app-card mb-4 p-4">
+        <p className="mb-3 text-sm font-semibold">Шүүлтүүр</p>
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
           <input
             type="date"
             value={filters.dateFrom}
-            onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                dateFrom: event.target.value,
+              }))
+            }
             className="input-shell h-10 px-3 text-[var(--foreground)]"
             aria-label="Эхлэх огноо"
           />
           <input
             type="date"
             value={filters.dateTo}
-            onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                dateTo: event.target.value,
+              }))
+            }
             className="input-shell h-10 px-3 text-[var(--foreground)]"
             aria-label="Дуусах огноо"
           />
           <select
-            value={filters.direction}
-            onChange={(event) => setFilters((current) => ({ ...current, direction: event.target.value }))}
-            className="input-shell h-10 px-3 text-[var(--foreground)]"
-            aria-label="Төрөл"
-          >
-            <option value="">Төрөл: Бүгд</option>
-            <option value="LEASE_OUT">Түрээслүүлэх</option>
-            <option value="LEASE_IN">Түрээслэх</option>
-          </select>
-          <select
             value={filters.party}
-            onChange={(event) => setFilters((current) => ({ ...current, party: event.target.value }))}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                party: event.target.value,
+              }))
+            }
             className="input-shell h-10 px-3 text-[var(--foreground)]"
             aria-label="Харилцагч"
           >
             <option value="">Харилцагч: Бүгд</option>
             {partyOptions.map((party) => (
-              <option key={party} value={party}>
-                {party}
+              <option key={party.key} value={party.key}>
+                {party.name}
               </option>
             ))}
           </select>
-          <select
+          <MaterialFilterPicker
+            materials={materialOptions}
             value={filters.material}
-            onChange={(event) => setFilters((current) => ({ ...current, material: event.target.value }))}
-            className="input-shell h-10 px-3 text-[var(--foreground)]"
-            aria-label="Материал"
+            onChange={(material) =>
+              setFilters((current) => ({ ...current, material }))
+            }
+            onHide={hideFilterMaterial}
+          />
+          <button
+            type="button"
+            onClick={() => setFilters(emptyRentalFilters)}
+            className="soft-chip h-10 justify-center px-4 font-medium"
           >
-            <option value="">Материал: Бүгд</option>
-            {materialOptions.map((material) => (
-              <option key={material} value={material}>
-                {material}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={() => setFilters(emptyFilters)} className="soft-chip h-10 justify-center px-4 font-medium">
             Цэвэрлэх
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="app-card overflow-hidden">
+      <section className="app-card overflow-hidden">
+        <div className="border-b border-[var(--line)] px-4 py-3">
+          <p className="text-sm font-semibold">Харилцагч компаниуд</p>
+        </div>
         <div className="overflow-x-auto">
-          <table className="font-data min-w-[1180px] border-collapse">
+          <table className="font-data min-w-[900px] border-collapse">
             <thead>
               <tr className="border-b border-[var(--line)] bg-[var(--surface-muted)] text-left">
-                {["Огноо", "Төрөл", "Харилцагч", "Материал", "Тоо", "Буцаасан", "Үлдэгдэл", "Өдөр", "Нэгж үнэ", "Дүн", "Тэмдэглэл"].map(
-                  (header) => (
-                    <th key={header} className="px-3 py-2.5 text-[0.72rem] font-semibold uppercase tracking-[0.04em] text-[var(--muted)]">
-                      {header}
-                    </th>
-                  ),
-                )}
+                {[
+                  "Компани",
+                  "Төлөв",
+                  "Идэвхтэй",
+                  "Материал",
+                  direction === "LEASE_OUT" ? "Авлага" : "Өглөг",
+                ].map((header) => (
+                  <th
+                    key={header}
+                    className="px-3 py-2.5 text-[0.72rem] font-semibold uppercase tracking-[0.04em] text-[var(--muted)]"
+                  >
+                    {header}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((record) => (
-                <tr key={record.id} className="border-b border-[var(--line)] last:border-b-0">
-                  <td className="px-3 py-3 text-[0.82rem]">{record.date}</td>
-                  <td className="px-3 py-3 text-[0.82rem]">
-                    <span
-                      className={`soft-chip px-2.5 py-1 text-xs font-semibold ${
-                        record.direction === "LEASE_OUT"
-                          ? "text-[var(--accent-strong)]"
-                          : "text-[var(--warning)]"
-                      }`}
+              {partySummaries.map((summary) => (
+                <tr
+                  key={summary.key}
+                  className="border-b border-[var(--line)] last:border-b-0 hover:bg-[var(--surface-muted)]"
+                >
+                  <td className="px-3 py-3 text-[0.82rem] font-semibold">
+                    <Link
+                      href={detailHref(summary.key, direction)}
+                      className="text-[var(--accent-strong)] hover:underline"
                     >
-                      {directionLabel(record.direction)}
-                    </span>
+                      {summary.name}
+                    </Link>
                   </td>
-                  <td className="px-3 py-3 text-[0.82rem] font-medium">{record.party}</td>
-                  <td className="px-3 py-3 text-[0.82rem]">{record.material}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem]">{record.quantity.toLocaleString()}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem]">{record.returned.toLocaleString()}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem] font-semibold">{remaining(record).toLocaleString()}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem]">{record.durationDays.toLocaleString()}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem]">{formatMoney(record.unitPrice)}</td>
-                  <td className="px-3 py-3 text-right text-[0.82rem] font-semibold">{formatMoney(lineTotal(record))}</td>
-                  <td className="px-3 py-3 text-[0.82rem] text-[var(--muted)]">{record.note || "-"}</td>
+                  <td className="px-3 py-3 text-[0.82rem] text-[var(--muted)]">
+                    {summary.companyId ? "Бүртгэлтэй" : "Гараар"}
+                  </td>
+                  <td className="px-3 py-3 text-right text-[0.82rem]">
+                    {summary.activeCount.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-3 text-right text-[0.82rem]">
+                    {(direction === "LEASE_OUT"
+                      ? summary.leaseOutRemaining
+                      : summary.leaseInRemaining
+                    ).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-3 text-right text-[0.82rem] font-semibold">
+                    {formatMoney(
+                      direction === "LEASE_OUT"
+                        ? summary.receivable
+                        : summary.payable,
+                    )}
+                  </td>
                 </tr>
               ))}
-              {filteredRecords.length === 0 ? (
+              {partySummaries.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-sm text-[var(--muted)]">
-                    Сонгосон нөхцөлд тохирох түрээсийн бүртгэл олдсонгүй.
+                  <td
+                    colSpan={5}
+                    className="px-3 py-8 text-center text-sm text-[var(--muted)]"
+                  >
+                    Сонгосон төрөл, шүүлтүүрт тохирох компани олдсонгүй.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
     </>
   );
 }

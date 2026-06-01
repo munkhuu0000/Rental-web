@@ -63,7 +63,9 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
       updateField("companyLogo", await fileToCompactLogoDataUrl(file));
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "Лого зураг боловсруулахад алдаа гарлаа.",
+        cause instanceof Error
+          ? cause.message
+          : "Лого зураг боловсруулахад алдаа гарлаа.",
       );
       updateField("companyLogo", "");
     }
@@ -153,17 +155,19 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
 
           <div className="mt-6 grid gap-5 md:grid-cols-2">
             <InfoField label="Компанийн нэр" value={form.companyName} />
-            <InfoField
-              label="Регистрийн дугаар"
-              value={form.companyRegister}
-            />
+            <InfoField label="Регистрийн дугаар" value={form.companyRegister} />
             <InfoField label="Утас" value={form.companyPhone} />
             <InfoField label="И-мэйл" value={form.companyEmail} />
           </div>
-          <InfoField label="Хаяг" value={form.companyAddress} className="mt-5" />
+          <InfoField
+            label="Хаяг"
+            value={form.companyAddress}
+            className="mt-5"
+          />
           <div className="mt-5 flex flex-col gap-4 border-t border-[var(--line)] pt-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-[var(--muted)]">
-              Компанийн нэр болон регистрийг нэг удаа бүртгэсний дараа өөрчлөх боломжгүй.
+              Компанийн нэр болон регистрийг нэг удаа бүртгэсний дараа өөрчлөх
+              боломжгүй.
             </p>
             <button
               type="button"
@@ -180,7 +184,10 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
             Хэрэглэгчийн мэдээлэл
           </h2>
           <div className="mt-6 space-y-5">
-            <InfoField label="Нэр" value={`${form.firstName} ${form.lastName}`} />
+            <InfoField
+              label="Нэр"
+              value={`${form.firstName} ${form.lastName}`}
+            />
             <InfoField label="И-мэйл" value={user.email} />
             <InfoField label="Утас" value={form.phone} />
             <InfoField label="Албан тушаал" value={form.position} />
@@ -198,7 +205,8 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
             Мэдээлэл шинэчлэх
           </h2>
           <p className="mt-2 max-w-[560px] text-sm text-[var(--muted)]">
-            Зассан мэдээлэл зөвхөн хадгалах товч дарсны дараа backend-д шинэчлэгдэнэ.
+            Зассан мэдээлэл зөвхөн хадгалах товч дарсны дараа backend-д
+            шинэчлэгдэнэ.
           </p>
         </div>
         <CompanyMark initial={companyInitial} logoUrl={form.companyLogo} />
@@ -254,7 +262,9 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
                     type="file"
                     accept="image/*"
                     className="sr-only"
-                    onChange={(event) => handleLogoChange(event.target.files?.[0] ?? null)}
+                    onChange={(event) =>
+                      handleLogoChange(event.target.files?.[0] ?? null)
+                    }
                   />
                 </label>
                 {form.companyLogo ? (
@@ -270,7 +280,11 @@ export function SettingsProfilePanel({ user }: { user: SettingsUser }) {
             </div>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <TextField label="Компанийн нэр" value={form.companyName} disabled />
+            <TextField
+              label="Компанийн нэр"
+              value={form.companyName}
+              disabled
+            />
             <TextField label="Регистр" value={form.companyRegister} disabled />
             <TextField
               label="Утас"
@@ -374,7 +388,9 @@ function InfoField({
   return (
     <label className={`block ${className}`}>
       <span className="mb-2 block text-sm text-[var(--muted)]">{label}</span>
-      <div className="input-shell min-h-12 min-w-0 break-words">{value || "-"}</div>
+      <div className="input-shell min-h-12 min-w-0 break-words">
+        {value || "-"}
+      </div>
     </label>
   );
 }

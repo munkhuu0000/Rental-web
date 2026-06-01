@@ -6,6 +6,7 @@ type SectionHeaderProps = {
   description?: string;
   action?: string;
   actionHref?: string;
+  actionIcon?: "plus" | "arrowLeft";
 };
 
 export function SectionHeader({
@@ -13,7 +14,10 @@ export function SectionHeader({
   description,
   action,
   actionHref = "#",
+  actionIcon = "plus",
 }: SectionHeaderProps) {
+  const ActionIcon = actionIcon === "arrowLeft" ? icons.arrowLeft : icons.plus;
+
   return (
     <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
       <div>
@@ -27,7 +31,7 @@ export function SectionHeader({
 
       {action ? (
         <Link href={actionHref} className="action-button">
-          {icons.plus("h-4 w-4")}
+          {ActionIcon("h-4 w-4")}
           {action}
         </Link>
       ) : null}

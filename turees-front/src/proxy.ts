@@ -13,7 +13,7 @@ const isWorkspaceRoute = createRouteMatcher([
   "/settings(.*)",
 ]);
 
-const clerkAuthMiddleware = clerkMiddleware(async (auth, request) => {
+const clerkAuthProxy = clerkMiddleware(async (auth, request) => {
   if (isWorkspaceRoute(request)) {
     await auth.protect({
       unauthenticatedUrl: new URL("/sign-in", request.url).toString(),
@@ -21,8 +21,8 @@ const clerkAuthMiddleware = clerkMiddleware(async (auth, request) => {
   }
 });
 
-export function middleware(request: NextRequest, event: NextFetchEvent) {
-  return clerkAuthMiddleware(request, event);
+export function proxy(request: NextRequest, event: NextFetchEvent) {
+  return clerkAuthProxy(request, event);
 }
 
 export const config = {

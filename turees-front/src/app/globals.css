@@ -154,6 +154,16 @@ table,
   overflow: visible;
 }
 
+.workspace-grid-collapsed .workspace-sidebar p,
+.workspace-grid-collapsed .workspace-sidebar nav span {
+  display: none;
+}
+
+.workspace-grid-collapsed .workspace-sidebar nav a {
+  justify-content: center;
+  padding-inline: 0;
+}
+
 .workspace-main {
   min-width: 0;
   background: var(--background);
@@ -263,11 +273,27 @@ table,
 
 @media (max-width: 1024px) {
   .workspace-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 
   .workspace-sidebar {
+    display: block;
+    overflow: hidden;
+  }
+
+  .workspace-sidebar .workspace-sidebar-brand {
+    justify-content: center;
+    padding-inline: 0.5rem;
+  }
+
+  .workspace-sidebar p,
+  .workspace-sidebar nav span {
     display: none;
+  }
+
+  .workspace-sidebar nav a {
+    justify-content: center;
+    padding-inline: 0;
   }
 
   .workspace-content {

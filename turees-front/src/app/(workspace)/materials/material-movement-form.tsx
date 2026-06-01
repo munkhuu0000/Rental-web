@@ -232,7 +232,7 @@ export function MaterialMovementForm({
         <span className="font-semibold text-[var(--foreground)]">
           Шинэ гүйлгээ бүртгэх
         </span>
-        <span>· орлого эсвэл зарлагын хөдөлгөөн нэмэх</span>
+        <span>· орлого эсвэл зарлагa нэмэх</span>
       </div>
 
       <div className="grid w-full gap-2 lg:grid-cols-[1.1fr_1.7fr_0.8fr_0.9fr_1fr_1.45fr_1.45fr_auto]">

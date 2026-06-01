@@ -25,6 +25,7 @@ next-env.d.ts
 .vinext/
 dev-server*.log
 .dev-server*.log
+codex-dev*.log
 
 # env and secrets
 .env
